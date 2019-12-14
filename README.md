@@ -10,7 +10,7 @@ The main feature of this ORM is to auto-link a one-to-many relationship between 
 2. Save the service-account json key in your project folder & give it a name. For e.g. `google-cloud.json`
 3. Set the `GOOGLE_APPLICATION_CREDENTIALS` environment variable to the json file. 
 For e.g. in Linux `export GOOGLE_APPLICATION_CREDENTIALS="google-cloud.json"`
-4. Import `FirestoreDocument` from firestore-ci `from firestore-ci import FirestoreDocument`
+4. Import `FirestoreDocument` from `firestore_ci` 
 5. Make your object model using `FirestoreDocument` For e.g. `class User(FirestoreDocument)`
 6. Override the `__init__()` method to add your fields
 7. Outside the model, call the `init()` method of Firestore document. For e.g. `User.init()` 
