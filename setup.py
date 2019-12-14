@@ -1,14 +1,22 @@
+from os import path
+
 from setuptools import setup
+
+this_directory = path.abspath(path.dirname(__file__))
+with open(path.join(this_directory, 'README.md'), encoding='utf-8') as f:
+    long_description = f.read()
 
 setup(
     name='firestore-ci',
-    version='1.0.0b1',
+    version='1.0.0b2',
     packages=[''],
-    url='github.com',
+    url='https://github.com/crazynayan/firestore',
     license='MIT',
     author='Nayan Zaveri',
     author_email='nayan@crazyideas.co.in',
     description='ORM for Firestore with cascade',
+    long_description=long_description,
+    long_description_content_type='text/markdown',
     classifiers=[
         'Development Status :: 4 - Beta',
         'Intended Audience :: Developers',
