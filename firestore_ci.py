@@ -126,7 +126,6 @@ class FirestoreDocument:
 
     def doc_to_dict(self) -> dict:
         doc_dict = deepcopy(self.__dict__)
-        doc_dict['id'] = doc_dict['_doc_id']
         del doc_dict['_doc_id']
         return doc_dict
 
@@ -158,7 +157,10 @@ class FirestoreDocument:
             if any(doc_dict == dict() for doc_dict in document_list):
                 return dict()
             setattr(document_copy, field, document_list)
-        return document_copy.doc_to_dict()
+        doc_dict = document_copy.__dict__
+        doc_dict['id'] = doc_dict['_doc_id']
+        del doc_dict['_doc_id']
+        return doc_dict
 
     @staticmethod
     def _eligible_for_cascade(field, value) -> bool:
