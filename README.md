@@ -7,7 +7,7 @@ The main feature of this ORM is to auto-link a one-to-many relationship between 
 
 ## How to use?
 1. Install firestore-ci `pip install firestore-ci`
-2. Save the service-account json key in your project folder & give it a name. For e.g. `google-cloud.json`
+2. Save the GCP service-account json key in your project folder & give it a name. For e.g. `google-cloud.json`
 3. Set the `GOOGLE_APPLICATION_CREDENTIALS` environment variable to the json file. 
 For e.g. in Linux `export GOOGLE_APPLICATION_CREDENTIALS="google-cloud.json"`
 4. Import `FirestoreDocument` from `firestore_ci` 
@@ -26,3 +26,7 @@ class User(FirestoreDocument):
 
 User.init()
 ```
+
+## Test
+The unit test cases for this package can be found [here](https://github.com/crazynayan/firestore-test). 
+The test cases are self explanatory and reviewing them will help understanding this package better.
