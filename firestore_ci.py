@@ -178,17 +178,17 @@ class FirestoreDocument:
     @classmethod
     def create_from_dict(cls, doc_dict: dict) -> _FirestoreDocChild:
         document = cls.dict_to_doc(doc_dict, cascade=True)
-        original_document = deepcopy(document)
-        doc_id = document.create()
-        original_document.set_id(doc_id)
-        return original_document
+        document.create()
+        return document
 
     def create(self) -> str:
+        document = deepcopy(self)
         documents = self._get_nested_documents()
         for field, doc_list in documents.items():
             ids: List[str] = [document.create() for document in doc_list]
-            setattr(self, field, ids)
-        doc = _DB.collection(self.COLLECTION).add(self.doc_to_dict())
+            setattr(document, field, ids)
+        doc = _DB.collection(document.COLLECTION).add(document.doc_to_dict())
+        self.set_id(doc[1].id)
         return doc[1].id
 
     def save(self, cascade: bool = False) -> bool:
