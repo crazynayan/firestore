@@ -7,9 +7,6 @@ from google.cloud.firestore import Client, CollectionReference, Query, DocumentS
 _DB = Client()
 # All models imported from FirestoreDocument are of type FirestoreDocChild
 _FirestoreDocChild = TypeVar('_FirestoreDocChild', bound='FirestoreDocument')
-# These can be imported for passing in order_by method
-ORDER_ASCENDING = Query.ASCENDING
-ORDER_DESCENDING = Query.DESCENDING
 # Used to map collection to model
 _REFERENCE: Dict[str, callable] = dict()
 
@@ -21,7 +18,18 @@ class FirestoreCIError(Exception):
 
 
 class _Query:
-    _COMPARISON_OPERATORS = {'<', '<=', '==', '>', '>=', 'array contains'}
+    LESS_THAN = '<'
+    LESS_THAN_OR_EQUAL = '<='
+    EQUAL = '=='
+    GREATER_THAN_OR_EQUAL = '>='
+    GREATER_THAN = '>'
+    ARRAY_CONTAINS = 'array_contains'
+    IN = 'in'
+    ARRAY_CONTAINS_ANY = 'array_contains_any'
+    _COMPARISON_OPERATORS = {LESS_THAN, LESS_THAN_OR_EQUAL, EQUAL, GREATER_THAN_OR_EQUAL, GREATER_THAN, ARRAY_CONTAINS,
+                             IN, ARRAY_CONTAINS_ANY}
+    ORDER_ASCENDING = Query.ASCENDING
+    ORDER_DESCENDING = Query.DESCENDING
     _DIRECTION = {ORDER_ASCENDING, ORDER_DESCENDING}
 
     def __init__(self):
