@@ -1,4 +1,4 @@
-from copy import deepcopy
+from copy import deepcopy, copy
 from typing import TypeVar, Optional, Set, Union, Type, List, Dict, Iterable
 
 from google.cloud.firestore import Client, CollectionReference, Query, DocumentSnapshot
@@ -43,62 +43,71 @@ class _Query:
         self._doc_class = document_class
         self._doc_fields = set(document_class().doc_to_dict())
         self._doc_ref: CollectionReference = _DB.collection(self._doc_class.COLLECTION)
-        self.init_query()
-
-    def init_query(self) -> None:
-        self._query_ref = self._doc_ref
         self._cascade = False
 
-    def filter_by(self, **kwargs) -> '_Query':
-        for field_name, field_value in kwargs.items():
-            if field_name in self._doc_fields:
-                self._query_ref = self._query_ref.where(field_name, '==', field_value)
-            else:
-                raise FirestoreCIError('filter_by method has invalid field.')
+    def _get_object_manager(self) -> '_Query':
+        if self._query_ref is None:
+            object_manager = copy(self)
+            object_manager._query_ref = self._doc_ref
+            return object_manager
         return self
 
+    def filter_by(self, **kwargs) -> '_Query':
+        object_manager = self._get_object_manager()
+        for field_name, field_value in kwargs.items():
+            if field_name in self._doc_fields:
+                object_manager._query_ref = object_manager._query_ref.where(field_name, '==', field_value)
+            else:
+                raise FirestoreCIError('filter_by method has invalid field.')
+        return object_manager
+
     def filter(self, field_name: str, condition: str, field_value: object) -> '_Query':
+        object_manager = self._get_object_manager()
         if field_name not in self._doc_fields:
             raise FirestoreCIError('filter method has invalid field.')
         if condition not in self._COMPARISON_OPERATORS:
             raise FirestoreCIError('filter method has invalid condition.')
-        self._query_ref = self._query_ref.where(field_name, condition, field_value)
-        return self
+        object_manager._query_ref = object_manager._query_ref.where(field_name, condition, field_value)
+        return object_manager
 
     def order_by(self, field_name: str, direction: str = ORDER_ASCENDING) -> '_Query':
+        object_manager = self._get_object_manager()
         if field_name not in self._doc_fields:
             raise FirestoreCIError('order_by method has invalid field.')
         if direction not in self._DIRECTION:
             raise FirestoreCIError('order_by has invalid direction.')
-        self._query_ref = self._query_ref.order_by(field_name, direction=direction)
-        return self
+        object_manager._query_ref = object_manager._query_ref.order_by(field_name, direction=direction)
+        return object_manager
 
     def limit(self, count: int) -> '_Query':
-        self._query_ref = self._query_ref.limit(count) if count > 0 else self._query_ref.limit(0)
-        return self
+        object_manager = self._get_object_manager()
+        object_manager._query_ref = object_manager._query_ref.limit(count) if count > 0 \
+            else object_manager._query_ref.limit(0)
+        return object_manager
 
     @property
     def cascade(self) -> '_Query':
-        self._cascade = True
-        return self
+        object_manager = self._get_object_manager()
+        object_manager._cascade = True
+        return object_manager
 
     def get(self) -> List[_FirestoreDocChild]:
-        docs: Iterable[DocumentSnapshot] = self._query_ref.stream()
+        query_ref = self._doc_ref if self._query_ref is None else self._query_ref
+        docs: Iterable[DocumentSnapshot] = query_ref.stream()
         documents: List = [self._doc_class.dict_to_doc(doc.to_dict(), doc.id, cascade=self._cascade) for doc in docs]
-        self.init_query()
         return documents
 
     def first(self) -> Optional[_FirestoreDocChild]:
-        doc: DocumentSnapshot = next((self._query_ref.limit(1).stream()), None)
+        query_ref = self._doc_ref if self._query_ref is None else self._query_ref
+        doc: DocumentSnapshot = next((query_ref.limit(1).stream()), None)
         document = self._doc_class.dict_to_doc(doc.to_dict(), doc.id, cascade=self._cascade) if doc else None
-        self.init_query()
         return document
 
     def delete(self) -> str:
-        docs: Iterable[DocumentSnapshot] = self._query_ref.stream()
+        query_ref = self._doc_ref if self._query_ref is None else self._query_ref
+        docs: Iterable[DocumentSnapshot] = query_ref.stream()
         documents: List = [self._doc_class.dict_to_doc(doc.to_dict(), doc.id, cascade=self._cascade) for doc in docs]
         results = [document.delete(cascade=self._cascade) for document in documents]
-        self.init_query()
         if results and all(result != str() for result in results):
             return results[-1]
         else:
