@@ -1,7 +1,7 @@
 from copy import deepcopy, copy
 from typing import TypeVar, Optional, Set, Union, Type, List, Dict, Iterable
 
-from google.cloud.firestore import Client, CollectionReference, Query, DocumentSnapshot
+from google.cloud.firestore import Client, CollectionReference, Query, DocumentSnapshot, WriteBatch
 
 # Need environment variable GOOGLE_APPLICATION_CREDENTIALS set to path of the the service account key (json file)
 _DB = Client()
@@ -107,7 +107,14 @@ class _Query:
         query_ref = self._doc_ref if self._query_ref is None else self._query_ref
         docs: Iterable[DocumentSnapshot] = query_ref.stream()
         documents: List = [self._doc_class.dict_to_doc(doc.to_dict(), doc.id, cascade=self._cascade) for doc in docs]
-        results = [document.delete(cascade=self._cascade) for document in documents]
+        batch: WriteBatch = _DB.batch()
+        results = list()
+        for index, document in enumerate(documents):
+            results.append(document.delete(cascade=self._cascade, batch=batch))
+            if (index + 1) % 100 == 0:
+                batch.commit()
+                batch: WriteBatch = _DB.batch()
+        batch.commit()
         if results and all(result != str() for result in results):
             return results[-1]
         else:
@@ -224,16 +231,20 @@ class FirestoreDocument:
         _DB.collection(self.COLLECTION).document(self._doc_id).set(document_copy.doc_to_dict())
         return True
 
-    def delete(self, cascade: bool = False) -> str:
+    def delete(self, cascade: bool = False, batch: WriteBatch = None) -> str:
         if not self._doc_id:
             return str()
         documents = self._get_nested_documents()
         if cascade:
-            if any(doc.delete(cascade=True) == str() for _, doc_list in documents.items() for doc in doc_list):
+            if any(doc.delete(cascade=True, batch=batch) == str() for _, doc_list in documents.items()
+                   for doc in doc_list):
                 return str()
         elif documents and any(document.id is None for _, doc_list in documents.items() for document in doc_list):
             return str()
-        _DB.collection(self.COLLECTION).document(self._doc_id).delete()
+        if batch:
+            batch.delete(_DB.collection(self.COLLECTION).document(self._doc_id))
+        else:
+            _DB.collection(self.COLLECTION).document(self._doc_id).delete()
         doc_id = self._doc_id
         self._doc_id = None
         return doc_id
