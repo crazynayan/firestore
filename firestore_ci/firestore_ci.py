@@ -1,7 +1,8 @@
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from copy import deepcopy, copy
 from typing import TypeVar, Optional, Set, Union, Type, List, Dict, Iterable
 
-from google.cloud.firestore import Client, CollectionReference, Query, DocumentSnapshot, WriteBatch
+from google.cloud.firestore import Client, CollectionReference, Query, DocumentSnapshot
 
 # Need environment variable GOOGLE_APPLICATION_CREDENTIALS set to path of the the service account key (json file)
 _DB = Client()
@@ -103,18 +104,20 @@ class _Query:
         document = self._doc_class.dict_to_doc(doc.to_dict(), doc.id, cascade=self._cascade) if doc else None
         return document
 
+    @staticmethod
+    def _delete_in_thread(document: 'FirestoreDocument', cascade: bool):
+        return document.delete(cascade)
+
     def delete(self) -> str:
         query_ref = self._doc_ref if self._query_ref is None else self._query_ref
         docs: Iterable[DocumentSnapshot] = query_ref.stream()
         documents: List = [self._doc_class.dict_to_doc(doc.to_dict(), doc.id, cascade=self._cascade) for doc in docs]
-        batch: WriteBatch = _DB.batch()
-        results = list()
-        for index, document in enumerate(documents):
-            results.append(document.delete(cascade=self._cascade, batch=batch))
-            if (index + 1) % 100 == 0:
-                batch.commit()
-                batch: WriteBatch = _DB.batch()
-        batch.commit()
+        if not documents:
+            return str()
+        with ThreadPoolExecutor() as executor:
+            delete_threads = {executor.submit(self._delete_in_thread, document, self._cascade)
+                              for document in documents}
+            results = [future.result() for future in as_completed(delete_threads)]
         if results and all(result != str() for result in results):
             return results[-1]
         else:
@@ -169,7 +172,15 @@ class FirestoreDocument:
                 firestore_document_list = [_REFERENCE[field].dict_to_doc(value_dict, cascade=True)
                                            for value_dict in values]
             else:
-                firestore_document_list = [_REFERENCE[field].get_by_id(nested_id, cascade=True) for nested_id in values]
+                ordered_id_list = [(index, nested_id) for index, nested_id in enumerate(values)]
+                with ThreadPoolExecutor() as executor:
+                    get_threads = {executor.submit(_REFERENCE[field].get_by_id, nested_id, True)
+                                   for nested_id in values}
+                    firestore_document_list = [future.result() for future in as_completed(get_threads)]
+                ordered_doc_list = [(next(ordered_id[0] for ordered_id in ordered_id_list if ordered_id[1] == doc.id),
+                                     doc) for doc in firestore_document_list if doc]
+                ordered_doc_list.sort(key=lambda ordered_tuple: ordered_tuple[0])
+                firestore_document_list = [ordered_tuple[1] for ordered_tuple in ordered_doc_list]
             setattr(document, field, firestore_document_list)
         return document
 
@@ -231,20 +242,17 @@ class FirestoreDocument:
         _DB.collection(self.COLLECTION).document(self._doc_id).set(document_copy.doc_to_dict())
         return True
 
-    def delete(self, cascade: bool = False, batch: WriteBatch = None) -> str:
+    def delete(self, cascade: bool = False) -> str:
         if not self._doc_id:
             return str()
         documents = self._get_nested_documents()
         if cascade:
-            if any(doc.delete(cascade=True, batch=batch) == str() for _, doc_list in documents.items()
+            if any(doc.delete(cascade=True) == str() for _, doc_list in documents.items()
                    for doc in doc_list):
                 return str()
         elif documents and any(document.id is None for _, doc_list in documents.items() for document in doc_list):
             return str()
-        if batch:
-            batch.delete(_DB.collection(self.COLLECTION).document(self._doc_id))
-        else:
-            _DB.collection(self.COLLECTION).document(self._doc_id).delete()
+        _DB.collection(self.COLLECTION).document(self._doc_id).delete()
         doc_id = self._doc_id
         self._doc_id = None
         return doc_id
