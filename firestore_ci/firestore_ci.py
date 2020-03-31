@@ -1,6 +1,6 @@
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from copy import deepcopy, copy
-from typing import TypeVar, Optional, Set, Union, Type, List, Dict, Iterable
+from typing import TypeVar, Optional, Union, Type, List, Dict, Iterable
 
 from google.cloud.firestore import Client, CollectionReference, Query, DocumentSnapshot
 
@@ -37,12 +37,12 @@ class _Query:
         self._doc_class: Optional[Type[_FirestoreDocChild]] = None
         self._doc_ref: Optional[CollectionReference] = None
         self._query_ref: Optional[Union[Query, CollectionReference]] = None
-        self._doc_fields: Set = set()
+        self._doc_fields: Dict = dict()
         self._cascade: bool = False
 
     def set_document(self, document_class: Type[_FirestoreDocChild]) -> None:
         self._doc_class = document_class
-        self._doc_fields = set(document_class().doc_to_dict())
+        self._doc_fields = document_class().doc_to_dict()
         self._doc_ref: CollectionReference = _DB.collection(self._doc_class.COLLECTION)
         self._cascade = False
 
@@ -65,7 +65,13 @@ class _Query:
     def filter(self, field_name: str, condition: str, field_value: object) -> '_Query':
         object_manager = self._get_object_manager()
         if field_name not in self._doc_fields:
-            raise FirestoreCIError('filter method has invalid field.')
+            if '.' not in field_name:
+                raise FirestoreCIError('filter method has invalid field.')
+            field = field_name.split('.')[0]
+            sub_field = field_name.split('.')[1]
+            if field not in self._doc_fields or not isinstance(self._doc_fields[field], dict) or \
+                    sub_field not in self._doc_fields[field]:
+                raise FirestoreCIError('filter method has invalid mapped field.')
         if condition not in self._COMPARISON_OPERATORS:
             raise FirestoreCIError('filter method has invalid condition.')
         object_manager._query_ref = object_manager._query_ref.where(field_name, condition, field_value)
@@ -226,6 +232,13 @@ class FirestoreDocument:
         self.set_id(doc[1].id)
         return doc[1].id
 
+    @classmethod
+    def create_from_list_of_dict(cls, doc_dict_list: List[dict]) -> List[_FirestoreDocChild]:
+        with ThreadPoolExecutor() as executor:
+            created_threads = {executor.submit(cls.create_from_dict, doc_dict) for doc_dict in doc_dict_list}
+            results = [future.result() for future in as_completed(created_threads)]
+        return results
+
     def save(self, cascade: bool = False) -> bool:
         if not self._doc_id:
             return False
@@ -241,6 +254,13 @@ class FirestoreDocument:
             setattr(document_copy, field, ids)
         _DB.collection(self.COLLECTION).document(self._doc_id).set(document_copy.doc_to_dict())
         return True
+
+    @classmethod
+    def save_all(cls, doc_list: List[_FirestoreDocChild], cascade: bool = False) -> List[bool]:
+        with ThreadPoolExecutor() as executor:
+            saved_threads = {executor.submit(doc.save, cascade) for doc in doc_list}
+            results = [future.result() for future in as_completed(saved_threads)]
+        return results
 
     def delete(self, cascade: bool = False) -> str:
         if not self._doc_id:
