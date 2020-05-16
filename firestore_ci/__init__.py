@@ -1,1 +1,1 @@
-from .firestore_ci import FirestoreDocument
+from .firestore_ci import FirestoreDocument, FirestoreQuery, FirestoreCIError

@@ -18,7 +18,7 @@ class FirestoreCIError(Exception):
         super().__init__(message)
 
 
-class _Query:
+class FirestoreQuery:
     LESS_THAN = '<'
     LESS_THAN_OR_EQUAL = '<='
     EQUAL = '=='
@@ -46,14 +46,14 @@ class _Query:
         self._doc_ref: CollectionReference = _DB.collection(self._doc_class.COLLECTION)
         self._cascade = False
 
-    def _get_object_manager(self) -> '_Query':
+    def _get_object_manager(self) -> 'FirestoreQuery':
         if self._query_ref is None:
             object_manager = copy(self)
             object_manager._query_ref = self._doc_ref
             return object_manager
         return self
 
-    def filter_by(self, **kwargs) -> '_Query':
+    def filter_by(self, **kwargs) -> 'FirestoreQuery':
         object_manager = self._get_object_manager()
         for field_name, field_value in kwargs.items():
             if field_name in self._doc_fields:
@@ -62,7 +62,7 @@ class _Query:
                 raise FirestoreCIError('filter_by method has invalid field.')
         return object_manager
 
-    def filter(self, field_name: str, condition: str, field_value: object) -> '_Query':
+    def filter(self, field_name: str, condition: str, field_value: object) -> 'FirestoreQuery':
         object_manager = self._get_object_manager()
         if field_name not in self._doc_fields:
             if '.' not in field_name:
@@ -77,7 +77,7 @@ class _Query:
         object_manager._query_ref = object_manager._query_ref.where(field_name, condition, field_value)
         return object_manager
 
-    def order_by(self, field_name: str, direction: str = ORDER_ASCENDING) -> '_Query':
+    def order_by(self, field_name: str, direction: str = ORDER_ASCENDING) -> 'FirestoreQuery':
         object_manager = self._get_object_manager()
         if field_name not in self._doc_fields:
             raise FirestoreCIError('order_by method has invalid field.')
@@ -86,14 +86,14 @@ class _Query:
         object_manager._query_ref = object_manager._query_ref.order_by(field_name, direction=direction)
         return object_manager
 
-    def limit(self, count: int) -> '_Query':
+    def limit(self, count: int) -> 'FirestoreQuery':
         object_manager = self._get_object_manager()
         object_manager._query_ref = object_manager._query_ref.limit(count) if count > 0 \
             else object_manager._query_ref.limit(0)
         return object_manager
 
     @property
-    def cascade(self) -> '_Query':
+    def cascade(self) -> 'FirestoreQuery':
         object_manager = self._get_object_manager()
         object_manager._cascade = True
         return object_manager
@@ -114,13 +114,14 @@ class _Query:
     def _delete_in_thread(document: 'FirestoreDocument', cascade: bool):
         return document.delete(cascade)
 
-    def delete(self) -> str:
+    def delete(self, workers: int = 0) -> str:
         query_ref = self._doc_ref if self._query_ref is None else self._query_ref
         docs: Iterable[DocumentSnapshot] = query_ref.stream()
         documents: List = [self._doc_class.dict_to_doc(doc.to_dict(), doc.id, cascade=self._cascade) for doc in docs]
         if not documents:
             return str()
-        with ThreadPoolExecutor() as executor:
+        workers = len(documents) if workers == 0 else workers
+        with ThreadPoolExecutor(max_workers=workers) as executor:
             delete_threads = {executor.submit(self._delete_in_thread, document, self._cascade)
                               for document in documents}
             results = [future.result() for future in as_completed(delete_threads)]
@@ -132,12 +133,12 @@ class _Query:
 
 class FirestoreDocument:
     COLLECTION: Optional[str] = None  # Collection should be initialize by the child class call to init.
-    objects: _Query = None
+    objects: FirestoreQuery = None
 
     @classmethod
     def init(cls, collection: Optional[str] = None):
         cls.COLLECTION = collection if collection else f"{cls.__name__.lower()}s"
-        cls.objects = _Query()
+        cls.objects = FirestoreQuery()
         cls.objects.set_document(cls)
         _REFERENCE[cls.COLLECTION] = cls
 
@@ -179,7 +180,8 @@ class FirestoreDocument:
                                            for value_dict in values]
             else:
                 ordered_id_list = [(index, nested_id) for index, nested_id in enumerate(values)]
-                with ThreadPoolExecutor() as executor:
+                workers = len(values) if values else None
+                with ThreadPoolExecutor(max_workers=workers) as executor:
                     get_threads = {executor.submit(_REFERENCE[field].get_by_id, nested_id, True)
                                    for nested_id in values}
                     firestore_document_list = [future.result() for future in as_completed(get_threads)]
@@ -233,8 +235,11 @@ class FirestoreDocument:
         return doc[1].id
 
     @classmethod
-    def create_from_list_of_dict(cls, doc_dict_list: List[dict]) -> List[_FirestoreDocChild]:
-        with ThreadPoolExecutor() as executor:
+    def create_from_list_of_dict(cls, doc_dict_list: List[dict], workers: int = 0) -> List[_FirestoreDocChild]:
+        if not doc_dict_list:
+            return list()
+        workers = len(doc_dict_list) if workers == 0 else workers
+        with ThreadPoolExecutor(max_workers=workers) as executor:
             created_threads = {executor.submit(cls.create_from_dict, doc_dict) for doc_dict in doc_dict_list}
             results = [future.result() for future in as_completed(created_threads)]
         return results
@@ -256,8 +261,11 @@ class FirestoreDocument:
         return True
 
     @classmethod
-    def save_all(cls, doc_list: List[_FirestoreDocChild], cascade: bool = False) -> List[bool]:
-        with ThreadPoolExecutor() as executor:
+    def save_all(cls, doc_list: List[_FirestoreDocChild], cascade: bool = False, workers: int = 0) -> List[bool]:
+        if not doc_list:
+            return list()
+        workers = len(doc_list) if workers == 0 else workers
+        with ThreadPoolExecutor(max_workers=workers) as executor:
             saved_threads = {executor.submit(doc.save, cascade) for doc in doc_list}
             results = [future.result() for future in as_completed(saved_threads)]
         return results

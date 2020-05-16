@@ -8,7 +8,7 @@ with open(path.join(this_directory, 'README.md'), encoding='utf-8') as f:
 
 setup(
     name='firestore-ci',
-    version='2020.3.31',
+    version='2020.5.16',
     url='https://github.com/crazynayan/firestore',
     packages=find_packages(),
     license='MIT',
