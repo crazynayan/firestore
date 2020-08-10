@@ -7,7 +7,8 @@ from google.cloud.firestore import Client, CollectionReference, Query, DocumentS
 # Need environment variable GOOGLE_APPLICATION_CREDENTIALS set to path of the the service account key (json file)
 _DB = Client()
 # All models imported from FirestoreDocument are of type FirestoreDocChild
-_FirestoreDocChild = TypeVar('_FirestoreDocChild', bound='FirestoreDocument')
+# noinspection PyTypeChecker
+_FirestoreDocChild = TypeVar("_FirestoreDocChild", bound="FirestoreDocument")
 # Used to map collection to model
 _REFERENCE: Dict[str, callable] = dict()
 
@@ -19,14 +20,14 @@ class FirestoreCIError(Exception):
 
 
 class FirestoreQuery:
-    LESS_THAN = '<'
-    LESS_THAN_OR_EQUAL = '<='
-    EQUAL = '=='
-    GREATER_THAN_OR_EQUAL = '>='
-    GREATER_THAN = '>'
-    ARRAY_CONTAINS = 'array_contains'
-    IN = 'in'
-    ARRAY_CONTAINS_ANY = 'array_contains_any'
+    LESS_THAN = "<"
+    LESS_THAN_OR_EQUAL = "<="
+    EQUAL = "=="
+    GREATER_THAN_OR_EQUAL = ">="
+    GREATER_THAN = ">"
+    ARRAY_CONTAINS = "array_contains"
+    IN = "in"
+    ARRAY_CONTAINS_ANY = "array_contains_any"
     _COMPARISON_OPERATORS = {LESS_THAN, LESS_THAN_OR_EQUAL, EQUAL, GREATER_THAN_OR_EQUAL, GREATER_THAN, ARRAY_CONTAINS,
                              IN, ARRAY_CONTAINS_ANY}
     ORDER_ASCENDING = Query.ASCENDING
@@ -39,6 +40,7 @@ class FirestoreQuery:
         self._query_ref: Optional[Union[Query, CollectionReference]] = None
         self._doc_fields: Dict = dict()
         self._cascade: bool = False
+        self._truncate: bool = False
 
     def set_document(self, document_class: Type[_FirestoreDocChild]) -> None:
         self._doc_class = document_class
@@ -46,57 +48,88 @@ class FirestoreQuery:
         self._doc_ref: CollectionReference = _DB.collection(self._doc_class.COLLECTION)
         self._cascade = False
 
-    def _get_object_manager(self) -> 'FirestoreQuery':
+    def _get_object_manager(self) -> "FirestoreQuery":
         if self._query_ref is None:
             object_manager = copy(self)
             object_manager._query_ref = self._doc_ref
             return object_manager
-        return self
+        return copy(self)
 
-    def filter_by(self, **kwargs) -> 'FirestoreQuery':
+    def filter_by(self, **kwargs) -> "FirestoreQuery":
         object_manager = self._get_object_manager()
         for field_name, field_value in kwargs.items():
             if field_name in self._doc_fields:
-                object_manager._query_ref = object_manager._query_ref.where(field_name, '==', field_value)
+                object_manager._query_ref = object_manager._query_ref.where(field_name, "==", field_value)
             else:
-                raise FirestoreCIError('filter_by method has invalid field.')
+                raise FirestoreCIError("filter_by method has invalid field.")
         return object_manager
 
-    def filter(self, field_name: str, condition: str, field_value: object) -> 'FirestoreQuery':
+    def filter(self, field_name: str, condition: str, field_value: object) -> "FirestoreQuery":
         object_manager = self._get_object_manager()
         if field_name not in self._doc_fields:
-            if '.' not in field_name:
-                raise FirestoreCIError('filter method has invalid field.')
-            field = field_name.split('.')[0]
-            sub_field = field_name.split('.')[1]
+            if "." not in field_name:
+                raise FirestoreCIError("filter method has invalid field.")
+            field = field_name.split(".")[0]
+            sub_field = field_name.split(".")[1]
             if field not in self._doc_fields or not isinstance(self._doc_fields[field], dict) or \
                     sub_field not in self._doc_fields[field]:
-                raise FirestoreCIError('filter method has invalid mapped field.')
+                raise FirestoreCIError("filter method has invalid mapped field.")
         if condition not in self._COMPARISON_OPERATORS:
-            raise FirestoreCIError('filter method has invalid condition.')
+            raise FirestoreCIError("filter method has invalid condition.")
         object_manager._query_ref = object_manager._query_ref.where(field_name, condition, field_value)
         return object_manager
 
-    def order_by(self, field_name: str, direction: str = ORDER_ASCENDING) -> 'FirestoreQuery':
+    def order_by(self, field_name: str, direction: str = ORDER_ASCENDING) -> "FirestoreQuery":
         object_manager = self._get_object_manager()
         if field_name not in self._doc_fields:
-            raise FirestoreCIError('order_by method has invalid field.')
+            raise FirestoreCIError("order_by method has invalid field.")
         if direction not in self._DIRECTION:
-            raise FirestoreCIError('order_by has invalid direction.')
+            raise FirestoreCIError("order_by has invalid direction.")
         object_manager._query_ref = object_manager._query_ref.order_by(field_name, direction=direction)
         return object_manager
 
-    def limit(self, count: int) -> 'FirestoreQuery':
+    def limit(self, count: int) -> "FirestoreQuery":
         object_manager = self._get_object_manager()
         object_manager._query_ref = object_manager._query_ref.limit(count) if count > 0 \
             else object_manager._query_ref.limit(0)
         return object_manager
 
     @property
-    def cascade(self) -> 'FirestoreQuery':
+    def cascade(self) -> "FirestoreQuery":
         object_manager = self._get_object_manager()
         object_manager._cascade = True
         return object_manager
+
+    @property
+    def truncate(self) -> "FirestoreQuery":
+        object_manager = self._get_object_manager()
+        object_manager._truncate = True
+        return object_manager
+
+    def create_from_dict(self, doc_dict: dict) -> _FirestoreDocChild:
+        input_dict = {field: value for field, value in doc_dict.items() if field in self._doc_fields}
+        if self._truncate:
+            input_dict = {field: value for field, value in input_dict.items() if value != self._doc_fields[field]}
+        else:
+            input_dict_saved = input_dict
+            input_dict = deepcopy(self._doc_fields)
+            for field, value in input_dict_saved.items():
+                input_dict[field] = value
+        _, doc_ref = self._doc_ref.add(input_dict)
+        created_doc: _FirestoreDocChild = self._doc_class()
+        created_doc.set_id(doc_ref.id)
+        for field, value in input_dict.items():
+            setattr(created_doc, field, value)
+        return created_doc
+
+    def create_from_list_of_dict(self, doc_dict_list: List[dict], workers: int = 0) -> List[_FirestoreDocChild]:
+        if not doc_dict_list:
+            return list()
+        workers = len(doc_dict_list) if workers == 0 else workers
+        with ThreadPoolExecutor(max_workers=workers) as executor:
+            created_threads = {executor.submit(self.create_from_dict, doc_dict) for doc_dict in doc_dict_list}
+            results = [future.result() for future in as_completed(created_threads)]
+        return results
 
     def get(self) -> List[_FirestoreDocChild]:
         query_ref = self._doc_ref if self._query_ref is None else self._query_ref
@@ -111,7 +144,7 @@ class FirestoreQuery:
         return document
 
     @staticmethod
-    def _delete_in_thread(document: 'FirestoreDocument', cascade: bool):
+    def _delete_in_thread(document: "FirestoreDocument", cascade: bool):
         return document.delete(cascade)
 
     def delete(self, workers: int = 0) -> str:
@@ -160,7 +193,7 @@ class FirestoreDocument:
 
     def doc_to_dict(self) -> dict:
         doc_dict = deepcopy(self.__dict__)
-        del doc_dict['_doc_id']
+        del doc_dict["_doc_id"]
         return doc_dict
 
     @classmethod
@@ -201,8 +234,8 @@ class FirestoreDocument:
                 return dict()
             setattr(document_copy, field, document_list)
         doc_dict = document_copy.__dict__
-        doc_dict['id'] = doc_dict['_doc_id']
-        del doc_dict['_doc_id']
+        doc_dict["id"] = doc_dict["_doc_id"]
+        del doc_dict["_doc_id"]
         return doc_dict
 
     @staticmethod

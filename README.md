@@ -3,7 +3,11 @@
 This is yet another attempt to create an ORM for Google Firestore Database. 
 This one is relatively simple one with not too many option to customize.
 In fact the entire source code is in one file firestore-ci.py.
-The main feature of this ORM is to auto-link a one-to-many relationship between two collections / objects.
+
+## Features
+1) Provide multi-thread interface to simulate async interaction with firestore
+2) A truncate feature to only create fields with non-default values in firestore
+3) A cascade feature - This will be removed in future release
 
 ## How to use?
 1. Install firestore-ci `pip install firestore-ci`
