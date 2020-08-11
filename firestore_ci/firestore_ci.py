@@ -41,12 +41,15 @@ class FirestoreQuery:
         self._doc_fields: Dict = dict()
         self._cascade: bool = False
         self._truncate: bool = False
+        self._no_orm: bool = False
 
     def set_document(self, document_class: Type[_FirestoreDocChild]) -> None:
         self._doc_class = document_class
         self._doc_fields = document_class().doc_to_dict()
         self._doc_ref: CollectionReference = _DB.collection(self._doc_class.COLLECTION)
         self._cascade = False
+        self._truncate: bool = False
+        self._no_orm: bool = False
 
     def _get_object_manager(self) -> "FirestoreQuery":
         if self._query_ref is None:
@@ -106,7 +109,13 @@ class FirestoreQuery:
         object_manager._truncate = True
         return object_manager
 
-    def create_from_dict(self, doc_dict: dict) -> _FirestoreDocChild:
+    @property
+    def no_orm(self) -> "FirestoreQuery":
+        object_manager = self._get_object_manager()
+        object_manager._no_orm = True
+        return object_manager
+
+    def create_from_dict(self, doc_dict: dict) -> Union[_FirestoreDocChild, dict]:
         input_dict = {field: value for field, value in doc_dict.items() if field in self._doc_fields}
         if self._truncate:
             input_dict = {field: value for field, value in input_dict.items() if value != self._doc_fields[field]}
@@ -116,13 +125,17 @@ class FirestoreQuery:
             for field, value in input_dict_saved.items():
                 input_dict[field] = value
         _, doc_ref = self._doc_ref.add(input_dict)
+        if self._no_orm:
+            input_dict["id"] = doc_ref.id
+            return input_dict
         created_doc: _FirestoreDocChild = self._doc_class()
         created_doc.set_id(doc_ref.id)
         for field, value in input_dict.items():
             setattr(created_doc, field, value)
         return created_doc
 
-    def create_from_list_of_dict(self, doc_dict_list: List[dict], workers: int = 0) -> List[_FirestoreDocChild]:
+    def create_from_list_of_dict(self, doc_dict_list: List[dict],
+                                 workers: int = 0) -> List[Union[_FirestoreDocChild, dict]]:
         if not doc_dict_list:
             return list()
         workers = len(doc_dict_list) if workers == 0 else workers
@@ -131,16 +144,29 @@ class FirestoreQuery:
             results = [future.result() for future in as_completed(created_threads)]
         return results
 
-    def get(self) -> List[_FirestoreDocChild]:
+    def get(self) -> List[Union[_FirestoreDocChild, dict]]:
         query_ref = self._doc_ref if self._query_ref is None else self._query_ref
         docs: Iterable[DocumentSnapshot] = query_ref.stream()
-        documents: List = [self._doc_class.dict_to_doc(doc.to_dict(), doc.id, cascade=self._cascade) for doc in docs]
+        if self._no_orm:
+            documents = list()
+            for doc in docs:
+                doc_dict = doc.to_dict()
+                doc_dict["id"] = doc.id
+                documents.append(doc_dict)
+        else:
+            documents = [self._doc_class.dict_to_doc(doc.to_dict(), doc.id, cascade=self._cascade) for doc in docs]
         return documents
 
-    def first(self) -> Optional[_FirestoreDocChild]:
+    def first(self) -> Optional[Union[_FirestoreDocChild, dict]]:
         query_ref = self._doc_ref if self._query_ref is None else self._query_ref
         doc: DocumentSnapshot = next((query_ref.limit(1).stream()), None)
-        document = self._doc_class.dict_to_doc(doc.to_dict(), doc.id, cascade=self._cascade) if doc else None
+        if not doc:
+            return None
+        if self._no_orm:
+            doc_dict = doc.to_dict()
+            doc_dict["id"] = doc.id
+            return doc_dict
+        document = self._doc_class.dict_to_doc(doc.to_dict(), doc.id, cascade=self._cascade)
         return document
 
     @staticmethod
