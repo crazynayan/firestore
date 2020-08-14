@@ -1,6 +1,7 @@
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from copy import deepcopy, copy
-from typing import TypeVar, Optional, Union, Type, List, Dict, Iterable
+from operator import itemgetter
+from typing import TypeVar, Optional, Union, Type, List, Dict, Iterable, Callable
 
 from google.cloud.firestore import Client, CollectionReference, Query, DocumentSnapshot
 
@@ -45,7 +46,8 @@ class FirestoreQuery:
 
     def set_document(self, document_class: Type[_FirestoreDocChild]) -> None:
         self._doc_class = document_class
-        self._doc_fields = document_class().doc_to_dict()
+        self._doc_fields = deepcopy(document_class().__dict__)
+        del self._doc_fields["_doc_id"]
         self._doc_ref: CollectionReference = _DB.collection(self._doc_class.COLLECTION)
         self._cascade = False
         self._truncate: bool = False
@@ -57,6 +59,74 @@ class FirestoreQuery:
             object_manager._query_ref = self._doc_ref
             return object_manager
         return copy(self)
+
+    @staticmethod
+    def _ordered_thread(func_to_execute: Callable, item: Union["FirestoreDocument", dict], index: int):
+        return func_to_execute(item), index
+
+    def _ordered_threads(self, item_list: list, workers: int, func_to_execute: Callable) -> list:
+        if not item_list:
+            return list()
+        workers = len(item_list) if workers == 0 else workers
+        ordered_list = [(item, index) for index, item in enumerate(item_list)]
+        with ThreadPoolExecutor(max_workers=workers) as executor:
+            threads = {executor.submit(self._ordered_thread, func_to_execute, item, index)
+                       for item, index in ordered_list}
+            results = [future.result() for future in as_completed(threads)]
+        results.sort(key=itemgetter(1))
+        results = [result for result, _ in results]
+        return results
+
+    def _sanitize_doc_dict(self, doc_dict: dict):
+        filtered_dict = {field: value for field, value in doc_dict.items() if field in self._doc_fields}
+        if self._truncate:
+            sanitized_dict = {field: value for field, value in filtered_dict.items()
+                              if value != self._doc_fields[field]}
+        else:
+            sanitized_dict = deepcopy(self._doc_fields)
+            for field, value in filtered_dict.items():
+                sanitized_dict[field] = value
+        return sanitized_dict
+
+    @property
+    def cascade(self) -> "FirestoreQuery":
+        object_manager = self._get_object_manager()
+        object_manager._cascade = True
+        return object_manager
+
+    @property
+    def truncate(self) -> "FirestoreQuery":
+        object_manager = self._get_object_manager()
+        object_manager._truncate = True
+        return object_manager
+
+    @property
+    def no_orm(self) -> "FirestoreQuery":
+        object_manager = self._get_object_manager()
+        object_manager._no_orm = True
+        return object_manager
+
+    def to_dicts(self, documents: List[_FirestoreDocChild]) -> List[dict]:
+        dict_list = list()
+        for document in documents:
+            doc_dict = deepcopy(document.__dict__)
+            if self._truncate:
+                doc_dict = {field: value for field, value in doc_dict.items() if value != self._doc_fields[field]}
+            doc_dict["id"] = document.id
+            doc_dict.pop("_doc_id", None)
+            dict_list.append(doc_dict)
+        return dict_list
+
+    def from_dicts(self, doc_dicts: List[dict]) -> List[_FirestoreDocChild]:
+        doc_list = list()
+        for doc_dict in doc_dicts:
+            doc: _FirestoreDocChild = self._doc_class()
+            for field, value in doc_dict.items():
+                if field not in doc.__dict__:
+                    continue
+                setattr(doc, field, value)
+            doc_list.append(doc)
+        return doc_list
 
     def filter_by(self, **kwargs) -> "FirestoreQuery":
         object_manager = self._get_object_manager()
@@ -97,51 +167,18 @@ class FirestoreQuery:
             else object_manager._query_ref.limit(0)
         return object_manager
 
-    @property
-    def cascade(self) -> "FirestoreQuery":
-        object_manager = self._get_object_manager()
-        object_manager._cascade = True
-        return object_manager
-
-    @property
-    def truncate(self) -> "FirestoreQuery":
-        object_manager = self._get_object_manager()
-        object_manager._truncate = True
-        return object_manager
-
-    @property
-    def no_orm(self) -> "FirestoreQuery":
-        object_manager = self._get_object_manager()
-        object_manager._no_orm = True
-        return object_manager
-
-    def create_from_dict(self, doc_dict: dict) -> Union[_FirestoreDocChild, dict]:
-        input_dict = {field: value for field, value in doc_dict.items() if field in self._doc_fields}
-        if self._truncate:
-            input_dict = {field: value for field, value in input_dict.items() if value != self._doc_fields[field]}
-        else:
-            input_dict_saved = input_dict
-            input_dict = deepcopy(self._doc_fields)
-            for field, value in input_dict_saved.items():
-                input_dict[field] = value
+    def create(self, doc_dict: dict) -> Union[_FirestoreDocChild, dict]:
+        input_dict = self._sanitize_doc_dict(doc_dict)
         _, doc_ref = self._doc_ref.add(input_dict)
         if self._no_orm:
             input_dict["id"] = doc_ref.id
             return input_dict
-        created_doc: _FirestoreDocChild = self._doc_class()
+        created_doc: _FirestoreDocChild = self.from_dicts([input_dict])[0]
         created_doc.set_id(doc_ref.id)
-        for field, value in input_dict.items():
-            setattr(created_doc, field, value)
         return created_doc
 
-    def create_from_list_of_dict(self, doc_dict_list: List[dict],
-                                 workers: int = 0) -> List[Union[_FirestoreDocChild, dict]]:
-        if not doc_dict_list:
-            return list()
-        workers = len(doc_dict_list) if workers == 0 else workers
-        with ThreadPoolExecutor(max_workers=workers) as executor:
-            created_threads = {executor.submit(self.create_from_dict, doc_dict) for doc_dict in doc_dict_list}
-            results = [future.result() for future in as_completed(created_threads)]
+    def create_all(self, doc_dict_list: List[dict], workers: int = 0) -> List[Union[_FirestoreDocChild, dict]]:
+        results = self._ordered_threads(doc_dict_list, workers, self.create)
         return results
 
     def get(self) -> List[Union[_FirestoreDocChild, dict]]:
@@ -168,6 +205,31 @@ class FirestoreQuery:
             return doc_dict
         document = self._doc_class.dict_to_doc(doc.to_dict(), doc.id, cascade=self._cascade)
         return document
+
+    def save(self, input: Union[_FirestoreDocChild, dict]) -> Union[dict, Optional[_FirestoreDocChild]]:
+        if isinstance(input, dict):
+            if "id" not in input:
+                return None
+            doc_id = input["id"]
+            doc_dict = self._sanitize_doc_dict(input)
+            doc = self.from_dicts([doc_dict])[0]
+        else:
+            if not input.id:
+                return None
+            doc = input
+            doc_id = doc.id
+            doc_dict = self.to_dicts([doc])[0]
+        doc_dict.pop("id", None)
+        self._doc_ref.document(doc_id).set(doc_dict)
+        doc_dict["id"] = doc_id
+        return doc_dict if self._no_orm else doc
+
+    def save_all(self, doc_list: List[Union[_FirestoreDocChild, dict]],
+                 workers: int = 0) -> List[Union[dict, _FirestoreDocChild]]:
+        if not all(("id" in doc and doc["id"]) if isinstance(doc, dict) else doc.id for doc in doc_list):
+            return list()
+        results = self._ordered_threads(doc_list, workers, self.save)
+        return results
 
     @staticmethod
     def _delete_in_thread(document: "FirestoreDocument", cascade: bool):
