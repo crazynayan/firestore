@@ -111,7 +111,8 @@ class FirestoreQuery:
         for document in documents:
             doc_dict = deepcopy(document.__dict__)
             if self._truncate:
-                doc_dict = {field: value for field, value in doc_dict.items() if value != self._doc_fields[field]}
+                doc_dict = {field: value for field, value in doc_dict.items()
+                            if field in self._doc_fields and value != self._doc_fields[field]}
             doc_dict["id"] = document.id
             doc_dict.pop("_doc_id", None)
             dict_list.append(doc_dict)
