@@ -1,23 +1,30 @@
+import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from copy import deepcopy, copy
 from operator import itemgetter
 from typing import TypeVar, Optional, Union, Type, List, Dict, Iterable, Callable
 
-from google.cloud.firestore import Client, CollectionReference, Query, DocumentSnapshot
-
-# Need environment variable GOOGLE_APPLICATION_CREDENTIALS set to path of the the service account key (json file)
-_DB = Client()
-# All models imported from FirestoreDocument are of type FirestoreDocChild
-# noinspection PyTypeChecker
-_FirestoreDocChild = TypeVar("_FirestoreDocChild", bound="FirestoreDocument")
-# Used to map collection to model
-_REFERENCE: Dict[str, callable] = dict()
+from google.cloud.firestore import Client, CollectionReference, Query, DocumentSnapshot, FieldFilter
 
 
 class FirestoreCIError(Exception):
 
     def __init__(self, message):
         super().__init__(message)
+
+
+if "FIRESTORE_EMULATOR_PROJECT_ID" in os.environ:
+    _DB = Client(project=os.getenv("FIRESTORE_EMULATOR_PROJECT_ID"))    # noqa
+elif "GOOGLE_APPLICATION_CREDENTIALS" in os.environ:
+    _DB = Client()
+else:
+    raise FirestoreCIError("Need either FIRESTORE_EMULATOR_PROJECT_ID or GOOGLE_APPLICATION_CREDENTIALS setup as environment variables.")
+
+# All models imported from FirestoreDocument are of type FirestoreDocChild
+# noinspection PyTypeChecker
+_FirestoreDocChild = TypeVar("_FirestoreDocChild", bound="FirestoreDocument")
+# Used to map a collection to model
+_REFERENCE: Dict[str, callable] = dict()
 
 
 class FirestoreQuery:
@@ -133,7 +140,7 @@ class FirestoreQuery:
         object_manager = self._get_object_manager()
         for field_name, field_value in kwargs.items():
             if field_name in self._doc_fields:
-                object_manager._query_ref = object_manager._query_ref.where(field_name, "==", field_value)
+                object_manager._query_ref = object_manager._query_ref.where(filter=FieldFilter(field_name, "==", field_value))
             else:
                 raise FirestoreCIError("filter_by method has invalid field.")
         return object_manager
@@ -145,12 +152,11 @@ class FirestoreQuery:
                 raise FirestoreCIError("filter method has invalid field.")
             field = field_name.split(".")[0]
             sub_field = field_name.split(".")[1]
-            if field not in self._doc_fields or not isinstance(self._doc_fields[field], dict) or \
-                    sub_field not in self._doc_fields[field]:
+            if field not in self._doc_fields or not isinstance(self._doc_fields[field], dict) or sub_field not in self._doc_fields[field]:
                 raise FirestoreCIError("filter method has invalid mapped field.")
         if condition not in self._COMPARISON_OPERATORS:
             raise FirestoreCIError("filter method has invalid condition.")
-        object_manager._query_ref = object_manager._query_ref.where(field_name, condition, field_value)
+        object_manager._query_ref = object_manager._query_ref.where(filter=FieldFilter(field_name, condition, field_value))
         return object_manager
 
     def order_by(self, field_name: str, direction: str = ORDER_ASCENDING) -> "FirestoreQuery":
@@ -254,7 +260,7 @@ class FirestoreQuery:
 
 
 class FirestoreDocument:
-    COLLECTION: Optional[str] = None  # Collection should be initialize by the child class call to init.
+    COLLECTION: Optional[str] = None  # Collection should be initialized by the child class call to init.
     objects: FirestoreQuery = None
 
     @classmethod

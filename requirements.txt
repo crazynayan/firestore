@@ -1,0 +1,22 @@
+# pip install google-cloud-firestore
+# pip install setuptools
+# pip install twine
+cachetools==5.5.0
+certifi==2024.7.4
+charset-normalizer==3.3.2
+google-api-core==2.19.1
+google-auth==2.34.0
+google-cloud-core==2.4.1
+google-cloud-firestore==2.17.2
+googleapis-common-protos==1.63.2
+grpcio==1.66.0
+grpcio-status==1.66.0
+idna==3.8
+proto-plus==1.24.0
+protobuf==5.27.3
+pyasn1==0.6.0
+pyasn1_modules==0.4.0
+requests==2.32.3
+rsa==4.9
+setuptools==73.0.1
+urllib3==2.2.2
